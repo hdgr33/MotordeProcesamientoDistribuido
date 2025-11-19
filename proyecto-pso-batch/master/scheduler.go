@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hdgr33/MotordeProcesamientoDistribuido/PROYECTO-PSO-BATCH/common/protocol"
 	"github.com/hdgr33/MotordeProcesamientoDistribuido/PROYECTO-PSO-BATCH/common/types"
-	"github.com/hdgr33/MotordeProcesamientoDistribuido/PROYECTO-PSO-BATCH/protocol"
 )
 
 const (
@@ -287,6 +287,7 @@ func (s *Scheduler) createTask(execution *JobExecution, nodeID string, partition
 		NodeID:     nodeID,
 		Operation:  node.Operation,
 		Function:   node.Function,
+		Key:        node.Key, // Agregar Key
 		InputPaths: inputPaths,
 		OutputPath: outputPath,
 		Partition:  partition,

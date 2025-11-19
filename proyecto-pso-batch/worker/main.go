@@ -146,28 +146,119 @@ func (w *Worker) executeTask(assignment types.TaskAssignment) {
 	task := assignment.Task
 	startTime := time.Now()
 
-	log.Printf("▶️  Ejecutando tarea %s...", task.ID)
+	log.Printf("▶️  Ejecutando tarea %s (op: %s)...", task.ID, task.Operation)
 
-	// TODO: Implementar ejecución real según task.Operation
-	// Por ahora, simulamos trabajo
-	time.Sleep(2 * time.Second)
+	// Ejecutar operador según el tipo
+	records, err := w.runOperator(&task)
 
-	// Simular resultado exitoso
-	result := types.TaskResult{
-		TaskID:           task.ID,
-		Status:           "COMPLETED",
-		OutputPath:       fmt.Sprintf("/tmp/output-%s.json", task.ID),
-		RecordsProcessed: 100,
-		Duration:         time.Since(startTime).Seconds(),
-		CompletedAt:      time.Now(),
+	var result types.TaskResult
+
+	if err != nil {
+		log.Printf("❌ Error ejecutando tarea %s: %v", task.ID, err)
+		result = types.TaskResult{
+			TaskID:      task.ID,
+			Status:      "FAILED",
+			Error:       err.Error(),
+			Duration:    time.Since(startTime).Seconds(),
+			CompletedAt: time.Now(),
+		}
+	} else {
+		// Escribir resultados
+		if err := writeRecordsToFile(task.OutputPath, records); err != nil {
+			log.Printf("❌ Error escribiendo resultados: %v", err)
+			result = types.TaskResult{
+				TaskID:      task.ID,
+				Status:      "FAILED",
+				Error:       fmt.Sprintf("error escribiendo output: %v", err),
+				Duration:    time.Since(startTime).Seconds(),
+				CompletedAt: time.Now(),
+			}
+		} else {
+			result = types.TaskResult{
+				TaskID:           task.ID,
+				Status:           "COMPLETED",
+				OutputPath:       task.OutputPath,
+				RecordsProcessed: len(records),
+				Duration:         time.Since(startTime).Seconds(),
+				CompletedAt:      time.Now(),
+			}
+			log.Printf("✅ Tarea %s completada: %d records procesados", task.ID, len(records))
+		}
 	}
 
 	// Reportar resultado al master
 	if err := w.reportResult(assignment.MasterURL, result); err != nil {
 		log.Printf("❌ Error reportando resultado: %v", err)
-	} else {
-		log.Printf("✅ Tarea %s completada", task.ID)
 	}
+}
+
+func (w *Worker) runOperator(task *types.Task) ([]types.Record, error) {
+	switch task.Operation {
+	case "read_csv":
+		return operatorReadCSV(task)
+
+	case "map":
+		// Leer input de la tarea anterior
+		input, err := w.readInputs(task)
+		if err != nil {
+			return nil, err
+		}
+		return operatorMap(task, input)
+
+	case "filter":
+		input, err := w.readInputs(task)
+		if err != nil {
+			return nil, err
+		}
+		return operatorFilter(task, input)
+
+	case "flat_map":
+		input, err := w.readInputs(task)
+		if err != nil {
+			return nil, err
+		}
+		return operatorFlatMap(task, input)
+
+	case "reduce_by_key":
+		input, err := w.readInputs(task)
+		if err != nil {
+			return nil, err
+		}
+		return operatorReduceByKey(task, input)
+
+	case "join":
+		// Join requiere múltiples inputs
+		var inputs [][]types.Record
+		for _, path := range task.InputPaths {
+			records, err := readRecordsFromFile(path)
+			if err != nil {
+				return nil, fmt.Errorf("error leyendo input %s: %w", path, err)
+			}
+			inputs = append(inputs, records)
+		}
+		return operatorJoin(task, inputs)
+
+	default:
+		return nil, fmt.Errorf("operador no soportado: %s", task.Operation)
+	}
+}
+
+func (w *Worker) readInputs(task *types.Task) ([]types.Record, error) {
+	if len(task.InputPaths) == 0 {
+		return nil, fmt.Errorf("no hay input paths")
+	}
+
+	// Si hay múltiples inputs, combinarlos
+	var allRecords []types.Record
+	for _, path := range task.InputPaths {
+		records, err := readRecordsFromFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("error leyendo %s: %w", path, err)
+		}
+		allRecords = append(allRecords, records...)
+	}
+
+	return allRecords, nil
 }
 
 func (w *Worker) reportResult(masterURL string, result types.TaskResult) error {

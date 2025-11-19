@@ -18,6 +18,7 @@ type Master struct {
 	workersMutex sync.RWMutex
 	jobs         map[string]*types.Job
 	jobsMutex    sync.RWMutex
+	scheduler    *Scheduler
 	port         string
 }
 
@@ -195,6 +196,17 @@ func (m *Master) handleJobRequest(w http.ResponseWriter, r *http.Request) {
 // ============================================================================
 // METRICS
 // ============================================================================
+
+func (m *Master) handleWorkersList(w http.ResponseWriter, r *http.Request) {
+	m.workersMutex.RLock()
+	workers := make([]types.WorkerInfo, 0, len(m.workers))
+	for _, worker := range m.workers {
+		workers = append(workers, *worker)
+	}
+	m.workersMutex.RUnlock()
+
+	json.NewEncoder(w).Encode(workers)
+}
 
 func (m *Master) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	m.workersMutex.RLock()

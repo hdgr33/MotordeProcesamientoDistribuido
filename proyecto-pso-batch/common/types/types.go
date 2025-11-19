@@ -66,6 +66,7 @@ type Task struct {
 	NodeID      string            `json:"node_id"`
 	Operation   string            `json:"operation"`
 	Function    string            `json:"function,omitempty"`
+	Key         string            `json:"key,omitempty"`         // para reduce_by_key, join
 	InputPaths  []string          `json:"input_paths,omitempty"` // archivos o URLs
 	OutputPath  string            `json:"output_path"`
 	Partition   int               `json:"partition"`

@@ -85,6 +85,15 @@ watch:
 workers:
 	./bin/client workers
 
+verify:
+	@if [ -z "$(ID)" ]; then \
+		echo "❌ Error: especifica el job ID con ID="; \
+		echo "Ejemplo: make verify ID=job-1234567890"; \
+		exit 1; \
+	fi
+	@chmod +x scripts/verify-results.sh
+	@./scripts/verify-results.sh $(ID)
+
 # Setup inicial
 setup:
 	@chmod +x scripts/setup.sh
