@@ -1,0 +1,35 @@
+{
+  "name": "wordcount-basic",
+  "dag": {
+    "nodes": [
+      {
+        "id": "read",
+        "op": "read_csv",
+        "path": "data/input/text.csv",
+        "partitions": 2
+      },
+      {
+        "id": "tokenize",
+        "op": "flat_map",
+        "fn": "split_words"
+      },
+      {
+        "id": "lowercase",
+        "op": "map",
+        "fn": "to_lower"
+      },
+      {
+        "id": "count",
+        "op": "reduce_by_key",
+        "key": "word",
+        "fn": "sum"
+      }
+    ],
+    "edges": [
+      ["read", "tokenize"],
+      ["tokenize", "lowercase"],
+      ["lowercase", "count"]
+    ]
+  },
+  "parallelism": 2
+}
