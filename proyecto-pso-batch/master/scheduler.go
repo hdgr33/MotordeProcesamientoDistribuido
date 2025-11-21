@@ -14,9 +14,7 @@ import (
 	"github.com/hdgr33/MotordeProcesamientoDistribuido/PROYECTO-PSO-BATCH/common/types"
 )
 
-const (
-	MaxRetries = 3
-)
+// MaxRetries está definido en master/main.go
 
 type Scheduler struct {
 	master    *Master
