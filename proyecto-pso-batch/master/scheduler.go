@@ -1,4 +1,6 @@
-// master/scheduler.go
+// ============================================================================
+// MONITOREO DE FALLOS
+// ============================================================================
 package main
 
 import (
@@ -13,6 +15,89 @@ import (
 	"github.com/hdgr33/MotordeProcesamientoDistribuido/PROYECTO-PSO-BATCH/common/protocol"
 	"github.com/hdgr33/MotordeProcesamientoDistribuido/PROYECTO-PSO-BATCH/common/types"
 )
+
+func (s *Scheduler) monitorTaskTimeouts() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		s.jobsMutex.RLock()
+		for _, execution := range s.jobs {
+			execution.TasksMutex.RLock()
+			for _, task := range execution.Tasks {
+				// Si la tarea está RUNNING hace más de 5 minutos, es timeout
+				if task.Status == "RUNNING" && task.StartedAt != nil {
+					elapsed := time.Since(*task.StartedAt)
+					if elapsed > 5*time.Minute {
+						log.Printf("⏱️  Timeout detectado en tarea %s (elapsed: %v)", task.ID, elapsed)
+						execution.TasksMutex.RUnlock()
+
+						// Cambiar a failed para que se reintente
+						task.Status = "FAILED"
+						task.Error = "Timeout después de 5 minutos"
+						s.retryTask(task)
+
+						execution.TasksMutex.Lock()
+					}
+				}
+			}
+			execution.TasksMutex.RUnlock()
+		}
+		s.jobsMutex.RUnlock()
+	}
+}
+
+func (s *Scheduler) monitorWorkerFailures() {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		// Obtener workers caídos
+		s.master.workersMutex.RLock()
+		downWorkers := make(map[string]bool)
+		for id, worker := range s.master.workers {
+			if worker.Status == "DOWN" {
+				downWorkers[id] = true
+			}
+		}
+		s.master.workersMutex.RUnlock()
+
+		if len(downWorkers) == 0 {
+			continue
+		}
+
+		log.Printf("⚠️  Workers caídos detectados: %v", downWorkers)
+
+		// Replanificar tareas de workers caídos
+		s.jobsMutex.RLock()
+		for _, execution := range s.jobs {
+			execution.TasksMutex.Lock()
+			for _, task := range execution.Tasks {
+				if downWorkers[task.AssignedTo] && task.Status == "RUNNING" {
+					log.Printf("🔄 Replanificando tarea %s (worker %s está DOWN)", task.ID, task.AssignedTo)
+					task.Status = "PENDING"
+					task.AssignedTo = ""
+					s.taskQueue <- task
+				}
+			}
+			execution.TasksMutex.Unlock()
+		}
+		s.jobsMutex.RUnlock()
+	}
+}
+
+// ============================================================================
+// UTILITIES
+// ============================================================================
+
+func (s *Scheduler) findNode(nodes []types.Node, nodeID string) *types.Node {
+	for i := range nodes {
+		if nodes[i].ID == nodeID {
+			return &nodes[i]
+		}
+	}
+	return nil
+} // master/scheduler.go
 
 // MaxRetries está definido en master/main.go
 
@@ -47,6 +132,12 @@ func (s *Scheduler) Start() {
 
 	// Worker que procesa la cola de tareas
 	go s.processTaskQueue()
+
+	// Monitorear timeouts de tareas
+	go s.monitorTaskTimeouts()
+
+	// Monitorear fallos de workers
+	go s.monitorWorkerFailures()
 }
 
 func (s *Scheduler) Stop() {
@@ -263,11 +354,24 @@ func (s *Scheduler) createTask(execution *JobExecution, nodeID string, partition
 
 	// Determinar input paths basado en dependencias
 	var inputPaths []string
-	for _, edge := range execution.Job.DAG.Edges {
-		if len(edge) == 2 && edge[1] == nodeID {
-			// Este nodo depende de edge[0]
-			if outputPath, exists := execution.OutputPaths[edge[0]]; exists {
-				inputPaths = append(inputPaths, outputPath)
+
+	// Para JOIN: buscar TODOS los nodos que alimentan este nodo
+	if node.Operation == "join" {
+		for _, edge := range execution.Job.DAG.Edges {
+			if len(edge) == 2 && edge[1] == nodeID {
+				// Este nodo depende de edge[0]
+				if outputPath, exists := execution.OutputPaths[edge[0]]; exists {
+					inputPaths = append(inputPaths, outputPath)
+				}
+			}
+		}
+	} else {
+		// Para otros operadores, buscar dependencias
+		for _, edge := range execution.Job.DAG.Edges {
+			if len(edge) == 2 && edge[1] == nodeID {
+				if outputPath, exists := execution.OutputPaths[edge[0]]; exists {
+					inputPaths = append(inputPaths, outputPath)
+				}
 			}
 		}
 	}
@@ -285,7 +389,7 @@ func (s *Scheduler) createTask(execution *JobExecution, nodeID string, partition
 		NodeID:     nodeID,
 		Operation:  node.Operation,
 		Function:   node.Function,
-		Key:        node.Key, // Agregar Key
+		Key:        node.Key,
 		InputPaths: inputPaths,
 		OutputPath: outputPath,
 		Partition:  partition,
@@ -451,8 +555,12 @@ func (s *Scheduler) HandleTaskResult(result types.TaskResult) {
 		return
 	}
 
-	// Guardar output path
-	execution.OutputPaths[task.NodeID] = result.OutputPath
+	// Guardar output path (CON MUTEX)
+	if execution != nil {
+		execution.TasksMutex.Lock()
+		execution.OutputPaths[task.NodeID] = result.OutputPath
+		execution.TasksMutex.Unlock()
+	}
 
 	log.Printf("✅ Tarea %s completada exitosamente", result.TaskID)
 }
@@ -535,17 +643,4 @@ func (s *Scheduler) GetJobExecution(jobID string) *JobExecution {
 	s.jobsMutex.RLock()
 	defer s.jobsMutex.RUnlock()
 	return s.jobs[jobID]
-}
-
-// ============================================================================
-// UTILITIES
-// ============================================================================
-
-func (s *Scheduler) findNode(nodes []types.Node, nodeID string) *types.Node {
-	for i := range nodes {
-		if nodes[i].ID == nodeID {
-			return &nodes[i]
-		}
-	}
-	return nil
 }

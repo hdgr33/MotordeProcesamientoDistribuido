@@ -1,0 +1,42 @@
+[
+  {
+    "data": {
+      "category": "Electronics",
+      "name": "Laptop",
+      "price": "1200.00",
+      "product_id": "1"
+    }
+  },
+  {
+    "data": {
+      "category": "Electronics",
+      "name": "Mouse",
+      "price": "25.00",
+      "product_id": "2"
+    }
+  },
+  {
+    "data": {
+      "category": "Electronics",
+      "name": "Keyboard",
+      "price": "75.00",
+      "product_id": "3"
+    }
+  },
+  {
+    "data": {
+      "category": "Electronics",
+      "name": "Monitor",
+      "price": "350.00",
+      "product_id": "4"
+    }
+  },
+  {
+    "data": {
+      "category": "Electronics",
+      "name": "Headphones",
+      "price": "150.00",
+      "product_id": "5"
+    }
+  }
+]

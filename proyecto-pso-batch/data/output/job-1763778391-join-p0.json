@@ -1,0 +1,90 @@
+[
+  {
+    "data": {
+      "amount": "150.00",
+      "category": "Electronics",
+      "customer_id": "101",
+      "date": "2025-01-01",
+      "name": "Laptop",
+      "price": "1200.00",
+      "product_id": "1"
+    }
+  },
+  {
+    "data": {
+      "amount": "200.50",
+      "category": "Electronics",
+      "customer_id": "102",
+      "date": "2025-01-02",
+      "name": "Mouse",
+      "price": "25.00",
+      "product_id": "2"
+    }
+  },
+  {
+    "data": {
+      "amount": "150.00",
+      "category": "Electronics",
+      "customer_id": "103",
+      "date": "2025-01-03",
+      "name": "Laptop",
+      "price": "1200.00",
+      "product_id": "1"
+    }
+  },
+  {
+    "data": {
+      "amount": "300.00",
+      "category": "Electronics",
+      "customer_id": "101",
+      "date": "2025-01-04",
+      "name": "Keyboard",
+      "price": "75.00",
+      "product_id": "3"
+    }
+  },
+  {
+    "data": {
+      "amount": "200.50",
+      "category": "Electronics",
+      "customer_id": "104",
+      "date": "2025-01-05",
+      "name": "Mouse",
+      "price": "25.00",
+      "product_id": "2"
+    }
+  },
+  {
+    "data": {
+      "amount": "150.00",
+      "category": "Electronics",
+      "customer_id": "102",
+      "date": "2025-01-06",
+      "name": "Laptop",
+      "price": "1200.00",
+      "product_id": "1"
+    }
+  },
+  {
+    "data": {
+      "amount": "300.00",
+      "category": "Electronics",
+      "customer_id": "103",
+      "date": "2025-01-07",
+      "name": "Keyboard",
+      "price": "75.00",
+      "product_id": "3"
+    }
+  },
+  {
+    "data": {
+      "amount": "200.50",
+      "category": "Electronics",
+      "customer_id": "101",
+      "date": "2025-01-08",
+      "name": "Mouse",
+      "price": "25.00",
+      "product_id": "2"
+    }
+  }
+]

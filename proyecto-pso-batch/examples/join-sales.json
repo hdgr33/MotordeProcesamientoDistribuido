@@ -1,0 +1,29 @@
+{
+  "name": "join-sales-catalog",
+  "dag": {
+    "nodes": [
+      {
+        "id": "read_sales",
+        "op": "read_csv",
+        "path": "data/input/sales.csv",
+        "partitions": 1
+      },
+      {
+        "id": "read_catalog",
+        "op": "read_csv",
+        "path": "data/input/catalog.csv",
+        "partitions": 1
+      },
+      {
+        "id": "join",
+        "op": "join",
+        "key": "product_id"
+      }
+    ],
+    "edges": [
+      ["read_sales", "join"],
+      ["read_catalog", "join"]
+    ]
+  },
+  "parallelism": 1
+}
