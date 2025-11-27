@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"strings"
 
@@ -30,6 +31,10 @@ func operatorReadCSV(task *types.Task) ([]types.Record, error) {
 	}
 	defer file.Close()
 
+	// Usar caché para manejar archivos grandes
+	cache := NewRecordCache(100, task.ID) // 100MB por defecto
+	defer cache.Cleanup()
+
 	reader := csv.NewReader(file)
 
 	// Leer header
@@ -37,8 +42,6 @@ func operatorReadCSV(task *types.Task) ([]types.Record, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error leyendo headers: %w", err)
 	}
-
-	var records []types.Record
 
 	// Leer todas las filas
 	lineNum := 1
@@ -59,9 +62,27 @@ func operatorReadCSV(task *types.Task) ([]types.Record, error) {
 			}
 		}
 
-		records = append(records, types.Record{Data: data})
+		record := types.Record{Data: data}
+		if err := cache.Add(record); err != nil {
+			return nil, err
+		}
+
 		lineNum++
 	}
+
+	// Flush: escribir records restantes a disco si es necesario
+	if err := cache.Flush(); err != nil {
+		return nil, err
+	}
+
+	// Obtener todos los records (en memoria + spill)
+	records, err := cache.GetAll()
+	if err != nil {
+		return nil, err
+	}
+
+	stats := cache.GetStats()
+	log.Printf("📊 ReadCSV Stats: %v", stats)
 
 	return records, nil
 }

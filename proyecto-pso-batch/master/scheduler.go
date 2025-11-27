@@ -1,3 +1,4 @@
+// master/scheduler.go
 // ============================================================================
 // MONITOREO DE FALLOS
 // ============================================================================
@@ -38,6 +39,7 @@ func (s *Scheduler) monitorTaskTimeouts() {
 						s.retryTask(task)
 
 						execution.TasksMutex.Lock()
+						continue
 					}
 				}
 			}
@@ -97,9 +99,11 @@ func (s *Scheduler) findNode(nodes []types.Node, nodeID string) *types.Node {
 		}
 	}
 	return nil
-} // master/scheduler.go
+}
 
-// MaxRetries está definido en master/main.go
+// ============================================================================
+// SCHEDULER STRUCT Y INIT
+// ============================================================================
 
 type Scheduler struct {
 	master    *Master
@@ -113,9 +117,9 @@ type JobExecution struct {
 	Job          *types.Job
 	Tasks        map[string]*types.Task
 	TasksMutex   sync.RWMutex
-	Stages       [][]string // Lista de stages (grupos de nodos que pueden ejecutarse en paralelo)
+	Stages       [][]string
 	CurrentStage int
-	OutputPaths  map[string]string // nodeID -> output path
+	OutputPaths  map[string]string
 }
 
 func NewScheduler(master *Master) *Scheduler {
@@ -128,7 +132,7 @@ func NewScheduler(master *Master) *Scheduler {
 }
 
 func (s *Scheduler) Start() {
-	log.Println("📅 Scheduler iniciado")
+	log.Println("📋 Scheduler iniciado")
 
 	// Worker que procesa la cola de tareas
 	go s.processTaskQueue()
@@ -142,7 +146,7 @@ func (s *Scheduler) Start() {
 
 func (s *Scheduler) Stop() {
 	close(s.stopChan)
-	log.Println("📅 Scheduler detenido")
+	log.Println("📋 Scheduler detenido")
 }
 
 // ============================================================================
@@ -153,7 +157,7 @@ func (s *Scheduler) ScheduleJob(job *types.Job) error {
 	s.jobsMutex.Lock()
 	defer s.jobsMutex.Unlock()
 
-	log.Printf("📅 Planificando job %s (%s)...", job.ID, job.Name)
+	log.Printf("📋 Planificando job %s (%s)...", job.ID, job.Name)
 
 	// Crear ejecución del job
 	execution := &JobExecution{
@@ -252,7 +256,7 @@ func (s *Scheduler) analyzeDAG(dag *types.DAG) ([][]string, error) {
 }
 
 // ============================================================================
-// STAGE EXECUTION
+// STAGE EXECUTION (CORREGIDO CON WAITGROUP)
 // ============================================================================
 
 func (s *Scheduler) executeStage(jobID string, stageIdx int) {
@@ -266,20 +270,29 @@ func (s *Scheduler) executeStage(jobID string, stageIdx int) {
 	}
 
 	if stageIdx >= len(execution.Stages) {
-		// Job completado
+		log.Printf("✨ Todos los stages completados para job %s", jobID)
 		s.completeJob(jobID)
 		return
 	}
 
 	stage := execution.Stages[stageIdx]
-	log.Printf("▶️  Ejecutando Stage %d de job %s: %v", stageIdx, jobID, stage)
+	log.Printf("▶️  Ejecutando Stage %d de job %s: %v (total stages: %d)", stageIdx, jobID, stage, len(execution.Stages))
 
 	execution.CurrentStage = stageIdx
 
 	// Crear tareas para cada nodo en el stage
 	var wg sync.WaitGroup
-	taskResults := make(chan error, len(stage))
+	var stageErrors []error
+	var errorMutex sync.Mutex
 
+	if len(stage) == 0 {
+		log.Printf("⚠️  Stage %d está vacío", stageIdx)
+		// Si el stage está vacío, avanzar al siguiente
+		s.executeStage(jobID, stageIdx+1)
+		return
+	}
+
+	// Crear todas las tareas del stage
 	for _, nodeID := range stage {
 		node := s.findNode(execution.Job.DAG.Nodes, nodeID)
 		if node == nil {
@@ -295,52 +308,121 @@ func (s *Scheduler) executeStage(jobID string, stageIdx int) {
 			partitions = execution.Job.Parallelism
 		}
 
+		log.Printf("   Creando %d tareas para nodo %s", partitions, nodeID)
+
 		// Crear una tarea por partición
 		for p := 0; p < partitions; p++ {
 			wg.Add(1)
+
 			go func(nodeID string, partition int) {
 				defer wg.Done()
 
 				task := s.createTask(execution, nodeID, partition)
+
 				execution.TasksMutex.Lock()
 				execution.Tasks[task.ID] = task
 				execution.TasksMutex.Unlock()
 
-				// Encolar tarea
+				log.Printf("   📤 Cola: %s", task.ID)
 				s.taskQueue <- task
 
-				// Esperar a que complete
-				if err := s.waitForTask(task.ID, 5*time.Minute); err != nil {
-					taskResults <- err
+				// Esperar a que complete con timeout robusto
+				if err := s.waitForTaskCompletion(jobID, task.ID, execution, 10*time.Minute); err != nil {
+					log.Printf("   ❌ Tarea %s error: %v", task.ID, err)
+					errorMutex.Lock()
+					stageErrors = append(stageErrors, err)
+					errorMutex.Unlock()
 				} else {
-					taskResults <- nil
+					log.Printf("   ✅ Tarea %s completó", task.ID)
 				}
 			}(nodeID, p)
 		}
 	}
 
-	// Esperar a que todas las tareas del stage completen
+	// Esperar a que TODAS las goroutines del stage terminen
+	log.Printf("⏳ Esperando que %d goroutines del stage completen...", len(stage))
 	wg.Wait()
-	close(taskResults)
 
 	// Verificar si hubo errores
-	hasErrors := false
-	for err := range taskResults {
-		if err != nil {
-			log.Printf("❌ Error en stage %d: %v", stageIdx, err)
-			hasErrors = true
-		}
-	}
-
-	if hasErrors {
-		s.failJob(jobID, "Errores en stage de ejecución")
+	if len(stageErrors) > 0 {
+		log.Printf("❌ Stage %d falló con %d errores", stageIdx, len(stageErrors))
+		s.failJob(jobID, fmt.Sprintf("Errores en stage %d: %d tareas fallidas", stageIdx, len(stageErrors)))
 		return
 	}
 
-	log.Printf("✅ Stage %d de job %s completado", stageIdx, jobID)
+	log.Printf("✅ Stage %d de job %s completado - Avanzando a stage %d", stageIdx, jobID, stageIdx+1)
 
-	// Ejecutar siguiente stage
+	// Ejecutar siguiente stage (RECURSIVO)
 	s.executeStage(jobID, stageIdx+1)
+}
+
+// ============================================================================
+// TASK COMPLETION MONITORING (MEJORADO)
+// ============================================================================
+
+// waitForTaskCompletion espera a que una tarea complete con un mecanismo robusto
+// Polling periódico en lugar de espera indefinida
+func (s *Scheduler) waitForTaskCompletion(jobID string, taskID string,
+	execution *JobExecution, timeout time.Duration) error {
+
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(500 * time.Millisecond) // Poll más frecuente
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			execution.TasksMutex.RLock()
+			task, exists := execution.Tasks[taskID]
+			execution.TasksMutex.RUnlock()
+
+			if !exists {
+				return fmt.Errorf("tarea no encontrada: %s", taskID)
+			}
+
+			// Verificar estado actual
+			switch task.Status {
+			case "COMPLETED":
+				return nil // ✅ Éxito
+
+			case "FAILED":
+				if task.AttemptNum >= MaxRetries {
+					return fmt.Errorf("tarea falló después de %d intentos", MaxRetries)
+				}
+				// Si aún hay reintentos, esperar a que se reencolé
+				// (handleTaskResult() la reencolará automáticamente)
+
+			case "PENDING", "RUNNING":
+				// Seguir esperando
+
+			case "TIMEOUT":
+				return fmt.Errorf("tarea expiró por timeout")
+			}
+
+			// Verificar timeout global
+			if time.Now().After(deadline) {
+				// Marcar como timeout y permitir reintento
+				execution.TasksMutex.Lock()
+				task.Status = "TIMEOUT"
+				task.Error = "Timeout global alcanzado"
+				execution.TasksMutex.Unlock()
+
+				log.Printf("⏱️  Timeout para tarea %s (intento %d/%d)",
+					taskID, task.AttemptNum, MaxRetries)
+
+				if task.AttemptNum >= MaxRetries {
+					return fmt.Errorf("tarea excedió timeout después de %d reintentos", MaxRetries)
+				}
+
+				// Reintentar
+				s.retryTask(task)
+				return nil // No es error fatal, el reintento continuará
+			}
+
+		case <-s.stopChan:
+			return fmt.Errorf("scheduler detenido")
+		}
+	}
 }
 
 // ============================================================================
@@ -490,16 +572,23 @@ func (s *Scheduler) selectWorker() *types.WorkerInfo {
 
 func (s *Scheduler) retryTask(task *types.Task) {
 	if task.AttemptNum >= MaxRetries {
-		log.Printf("❌ Tarea %s excedió número máximo de reintentos", task.ID)
+		log.Printf("❌ Tarea %s excedió número máximo de reintentos (%d)",
+			task.ID, MaxRetries)
 		task.Status = "FAILED"
-		task.Error = "Máximo número de reintentos excedido"
+		task.Error = fmt.Sprintf("Máximo número de reintentos excedido (%d)", MaxRetries)
 		return
 	}
 
-	log.Printf("🔄 Reintentando tarea %s (intento %d/%d)", task.ID, task.AttemptNum, MaxRetries)
+	log.Printf("🔄 Reintentando tarea %s (intento %d/%d)",
+		task.ID, task.AttemptNum+1, MaxRetries)
 
 	task.Status = "PENDING"
-	time.Sleep(2 * time.Second)
+	task.AssignedTo = ""
+	task.StartedAt = nil
+
+	// Esperar un poco antes de reenencolar
+	time.Sleep(1 * time.Second)
+
 	s.taskQueue <- task
 }
 
@@ -534,10 +623,12 @@ func (s *Scheduler) HandleTaskResult(result types.TaskResult) {
 	}
 
 	// Actualizar estado
+	execution.TasksMutex.Lock()
 	task.Status = result.Status
 	task.Error = result.Error
 	now := time.Now()
 	task.CompletedAt = &now
+	execution.TasksMutex.Unlock()
 
 	// Actualizar worker
 	if task.AssignedTo != "" {
@@ -548,58 +639,22 @@ func (s *Scheduler) HandleTaskResult(result types.TaskResult) {
 		s.master.workersMutex.Unlock()
 	}
 
-	// Si falló, reintentar
+	// Si falló, reintentar automáticamente
 	if result.Status == "FAILED" {
 		log.Printf("❌ Tarea %s falló: %s", result.TaskID, result.Error)
 		s.retryTask(task)
 		return
 	}
 
-	// Guardar output path (CON MUTEX)
-	if execution != nil {
-		execution.TasksMutex.Lock()
-		execution.OutputPaths[task.NodeID] = result.OutputPath
-		execution.TasksMutex.Unlock()
+	// Si completó exitosamente, guardar output path
+	if result.Status == "COMPLETED" {
+		if execution != nil {
+			execution.TasksMutex.Lock()
+			execution.OutputPaths[task.NodeID] = result.OutputPath
+			execution.TasksMutex.Unlock()
+		}
+		log.Printf("✅ Tarea %s completada exitosamente", result.TaskID)
 	}
-
-	log.Printf("✅ Tarea %s completada exitosamente", result.TaskID)
-}
-
-func (s *Scheduler) waitForTask(taskID string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-
-	for time.Now().Before(deadline) {
-		// Buscar tarea
-		s.jobsMutex.RLock()
-		var task *types.Task
-		for _, exec := range s.jobs {
-			exec.TasksMutex.RLock()
-			if t, exists := exec.Tasks[taskID]; exists {
-				task = t
-			}
-			exec.TasksMutex.RUnlock()
-			if task != nil {
-				break
-			}
-		}
-		s.jobsMutex.RUnlock()
-
-		if task == nil {
-			return fmt.Errorf("tarea no encontrada")
-		}
-
-		if task.Status == "COMPLETED" {
-			return nil
-		}
-
-		if task.Status == "FAILED" && task.AttemptNum >= MaxRetries {
-			return fmt.Errorf("tarea falló después de %d intentos", MaxRetries)
-		}
-
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	return fmt.Errorf("timeout esperando tarea")
 }
 
 // ============================================================================
@@ -619,6 +674,14 @@ func (s *Scheduler) completeJob(jobID string) {
 	now := time.Now()
 	execution.Job.CompletedAt = &now
 
+	// Actualizar también en el master
+	s.master.jobsMutex.Lock()
+	if job, exists := s.master.jobs[jobID]; exists {
+		job.Status = "COMPLETED"
+		job.CompletedAt = &now
+	}
+	s.master.jobsMutex.Unlock()
+
 	duration := now.Sub(execution.Job.SubmittedAt)
 	log.Printf("✨ Job %s completado en %s", jobID, duration)
 }
@@ -635,6 +698,14 @@ func (s *Scheduler) failJob(jobID string, reason string) {
 	execution.Job.Status = "FAILED"
 	now := time.Now()
 	execution.Job.CompletedAt = &now
+
+	// Actualizar también en el master
+	s.master.jobsMutex.Lock()
+	if job, exists := s.master.jobs[jobID]; exists {
+		job.Status = "FAILED"
+		job.CompletedAt = &now
+	}
+	s.master.jobsMutex.Unlock()
 
 	log.Printf("❌ Job %s falló: %s", jobID, reason)
 }

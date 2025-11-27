@@ -1,0 +1,28 @@
+{
+  "name": "benchmark-large-dataset",
+  "dag": {
+    "nodes": [
+      {
+        "id": "read",
+        "op": "read_csv",
+        "path": "data/input/large-dataset.csv",
+        "partitions": 4
+      },
+      {
+        "id": "filter",
+        "op": "filter",
+        "fn": "non_empty"
+      },
+      {
+        "id": "lowercase",
+        "op": "map",
+        "fn": "to_lower"
+      }
+    ],
+    "edges": [
+      ["read", "filter"],
+      ["filter", "lowercase"]
+    ]
+  },
+  "parallelism": 4
+}
