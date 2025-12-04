@@ -1,122 +1,182 @@
-.PHONY: build clean run-master run-worker test
+# PSO Batch - Makefile
+
+.PHONY: all build test clean up down logs workers wordcount benchmark help
 
 # Variables
 MASTER_PORT=8080
-WORKER1_PORT=9001
-WORKER2_PORT=9002
+WORKERS=3
+
+# Colores para output
+GREEN=\033[0;32m
+YELLOW=\033[1;33m
+NC=\033[0m # No Color
+
+all: build
+
+help:
+	@echo "PSO Batch - Motor de Procesamiento Distribuido"
+	@echo ""
+	@echo "Comandos disponibles:"
+	@echo "  make build       - Compilar todos los componentes"
+	@echo "  make test        - Ejecutar suite de tests"
+	@echo "  make up          - Iniciar cluster (1 master + 3 workers)"
+	@echo "  make down        - Detener cluster"
+	@echo "  make logs        - Ver logs del cluster"
+	@echo "  make wordcount   - Ejecutar ejemplo WordCount"
+	@echo "  make benchmark   - Ejecutar benchmarks de performance"
+	@echo "  make clean       - Limpiar archivos generados"
 
 # Build
 build:
-	@echo "🔨 Compilando componentes..."
-	go build -o bin/master ./master
-	go build -o bin/worker ./worker
-	go build -o bin/client ./client
-	@echo "✅ Build completado"
+	@echo "$(GREEN)Building project...$(NC)"
+	@cd master && go build -o ../bin/master
+	@cd worker && go build -o ../bin/worker
+	@cd client && go build -o ../bin/client
+	@echo "$(GREEN)Build complete!$(NC)"
 
-# Clean
-clean:
-	@echo "🧹 Limpiando binarios..."
-	rm -rf bin/
-	rm -rf data/output/*
-	@echo "✅ Limpieza completada"
-
-# Run Master
-run-master: build
-	@echo "🚀 Iniciando Master en puerto $(MASTER_PORT)..."
-	./bin/master
-
-# Run Workers (en terminales separadas)
-run-worker1: build
-	@echo "🚀 Iniciando Worker 1 en puerto $(WORKER1_PORT)..."
-	WORKER_ID=worker-1 WORKER_PORT=$(WORKER1_PORT) MASTER_URL=http://localhost:$(MASTER_PORT) ./bin/worker
-
-run-worker2: build
-	@echo "🚀 Iniciando Worker 2 en puerto $(WORKER2_PORT)..."
-	WORKER_ID=worker-2 WORKER_PORT=$(WORKER2_PORT) MASTER_URL=http://localhost:$(MASTER_PORT) ./bin/worker
-
-# Run all (requiere tmux o usar script separado)
-run-all: build
-	@echo "⚠️  Ejecuta en terminales separadas:"
-	@echo "Terminal 1: make run-master"
-	@echo "Terminal 2: make run-worker1"
-	@echo "Terminal 3: make run-worker2"
-
-# Test
+# Tests
 test:
-	@echo "🧪 Ejecutando tests..."
-	go test -v ./...
+	@echo "$(GREEN)Running tests...$(NC)"
+	@echo "\n=== Master Tests ==="
+	@cd master && go test -v -cover
+	@echo "\n=== Worker Tests ==="
+	@cd worker && go test -v -cover
+	@echo "\n=== Common Tests ==="
+	@cd common && go test -v -cover ./...
+	@echo "$(GREEN)All tests passed!$(NC)"
 
-# Format
-fmt:
-	@echo "🎨 Formateando código..."
-	go fmt ./...
+test-coverage:
+	@echo "$(GREEN)Generating coverage report...$(NC)"
+	@cd master && go test -coverprofile=coverage.out && go tool cover -html=coverage.out -o coverage.html
+	@cd worker && go test -coverprofile=coverage.out && go tool cover -html=coverage.out -o coverage.html
+	@echo "$(GREEN)Coverage reports generated: master/coverage.html, worker/coverage.html$(NC)"
 
-# Install dependencies
-deps:
-	@echo "📦 Descargando dependencias..."
-	go mod download
-	go mod tidy
+# Docker operations
+build-docker:
+	@echo "$(GREEN)Building Docker images...$(NC)"
+	@docker-compose build
+	@echo "$(GREEN)Docker images ready!$(NC)"
 
-# Client commands (shortcuts)
-submit:
-	@if [ -z "$(JOB)" ]; then \
-		echo "❌ Error: especifica el archivo con JOB="; \
-		echo "Ejemplo: make submit JOB=examples/wordcount.json"; \
-		exit 1; \
-	fi
-	./bin/client submit $(JOB)
+up:
+	@echo "$(GREEN)Starting cluster (1 master + $(WORKERS) workers)...$(NC)"
+	@docker-compose up -d --scale worker=$(WORKERS)
+	@sleep 3
+	@echo "$(GREEN)Cluster started!$(NC)"
+	@make status
+
+down:
+	@echo "$(YELLOW)Stopping cluster...$(NC)"
+	@docker-compose down
+	@echo "$(GREEN)Cluster stopped$(NC)"
+
+restart: down up
 
 status:
-	@if [ -z "$(ID)" ]; then \
-		echo "❌ Error: especifica el job ID con ID="; \
-		echo "Ejemplo: make status ID=job-1234567890"; \
-		exit 1; \
-	fi
-	./bin/client status $(ID)
+	@echo "=== Cluster Status ==="
+	@docker-compose ps
 
-watch:
-	@if [ -z "$(ID)" ]; then \
-		echo "❌ Error: especifica el job ID con ID="; \
-		echo "Ejemplo: make watch ID=job-1234567890"; \
-		exit 1; \
-	fi
-	./bin/client watch $(ID)
+logs:
+	@docker-compose logs -f
 
+logs-master:
+	@docker-compose logs -f master
+
+logs-worker:
+	@docker-compose logs -f worker
+
+# Client operations
 workers:
-	./bin/client workers
+	@echo "=== Active Workers ==="
+	@./bin/client workers
 
-verify:
-	@if [ -z "$(ID)" ]; then \
-		echo "❌ Error: especifica el job ID con ID="; \
-		echo "Ejemplo: make verify ID=job-1234567890"; \
+metrics:
+	@echo "=== System Metrics ==="
+	@./bin/client metrics
+
+# Examples
+wordcount:
+	@echo "$(GREEN)Running WordCount example...$(NC)"
+	@./bin/client submit examples/wordcount.json
+	@echo "\n$(YELLOW)Job submitted! Use 'make status JOB_ID=<id>' to check progress$(NC)"
+
+wordcount-watch:
+	@if [ -z "$(JOB_ID)" ]; then \
+		echo "$(YELLOW)Usage: make wordcount-watch JOB_ID=<job-id>$(NC)"; \
 		exit 1; \
 	fi
-	@chmod +x scripts/verify-results.sh
-	@./scripts/verify-results.sh $(ID)
+	@./bin/client watch $(JOB_ID)
+
+job-status:
+	@if [ -z "$(JOB_ID)" ]; then \
+		echo "$(YELLOW)Usage: make job-status JOB_ID=<job-id>$(NC)"; \
+		exit 1; \
+	fi
+	@./bin/client status $(JOB_ID)
+
+job-results:
+	@if [ -z "$(JOB_ID)" ]; then \
+		echo "$(YELLOW)Usage: make job-results JOB_ID=<job-id>$(NC)"; \
+		exit 1; \
+	fi
+	@./bin/client results $(JOB_ID)
+
+# Benchmarks
+benchmark:
+	@echo "$(GREEN)Running benchmarks...$(NC)"
+	@./scripts/run-benchmarks.sh
+
+benchmark-go:
+	@echo "$(GREEN)Running Go benchmarks...$(NC)"
+	@cd master && go test -bench=. -benchmem
+	@cd worker && go test -bench=. -benchmem
+
+# Test de fallos
+test-failure:
+	@echo "$(GREEN)Testing failure recovery...$(NC)"
+	@./scripts/test-failure.sh
+
+# Cleanup
+clean:
+	@echo "$(YELLOW)Cleaning up...$(NC)"
+	@rm -rf bin/
+	@rm -rf data/output/*
+	@rm -rf data/spill/*
+	@rm -f master/coverage.out master/coverage.html
+	@rm -f worker/coverage.out worker/coverage.html
+	@docker-compose down -v
+	@echo "$(GREEN)Cleanup complete$(NC)"
+
+# Desarrollo
+fmt:
+	@echo "$(GREEN)Formatting code...$(NC)"
+	@go fmt ./...
+
+lint:
+	@echo "$(GREEN)Running linter...$(NC)"
+	@golangci-lint run ./...
+
+# Instalación de dependencias
+deps:
+	@echo "$(GREEN)Installing dependencies...$(NC)"
+	@go mod download
+	@go mod tidy
 
 # Setup inicial
-setup:
-	@chmod +x scripts/setup.sh
-	@./scripts/setup.sh
+setup: deps
+	@echo "$(GREEN)Initial setup...$(NC)"
+	@mkdir -p bin
+	@mkdir -p data/input
+	@mkdir -p data/output
+	@mkdir -p data/spill
+	@echo "$(GREEN)Setup complete! Run 'make build' to compile$(NC)"
 
-# Help
-help:
-	@echo "Comandos disponibles:"
-	@echo ""
-	@echo "Build & Run:"
-	@echo "  make build        - Compilar todos los componentes"
-	@echo "  make setup        - Setup inicial del proyecto"
-	@echo "  make run-master   - Ejecutar Master"
-	@echo "  make run-worker1  - Ejecutar Worker 1"
-	@echo "  make run-worker2  - Ejecutar Worker 2"
-	@echo ""
-	@echo "Cliente:"
-	@echo "  make submit JOB=<file>  - Enviar job"
-	@echo "  make status ID=<id>     - Ver estado de job"
-	@echo "  make watch ID=<id>      - Monitorear job"
-	@echo "  make workers            - Listar workers"
-	@echo ""
-	@echo "Otros:"
-	@echo "  make test         - Ejecutar tests"
-	@echo "  make clean        - Limpiar binarios"
-	@echo "  make fmt          - Formatear código"
+# Demo completo
+demo: clean setup build build-docker up
+	@echo "\n$(GREEN)=== PSO Batch Demo ===$(NC)"
+	@sleep 5
+	@echo "\n$(YELLOW)1. Checking workers...$(NC)"
+	@make workers
+	@sleep 2
+	@echo "\n$(YELLOW)2. Submitting WordCount job...$(NC)"
+	@make wordcount
+	@echo "\n$(GREEN)Demo complete! Check logs with: make logs$(NC)"

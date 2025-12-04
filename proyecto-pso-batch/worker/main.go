@@ -1,5 +1,4 @@
-// worker/main.go - VERSIÓN SIMPLIFICADA (SIN checks de env)
-
+// worker/main.go
 package main
 
 import (
@@ -41,7 +40,7 @@ func main() {
 
 	// Registrar con el master
 	if err := worker.register(); err != nil {
-		log.Fatalf("❌ Error registrando worker: %v", err)
+		log.Fatalf("ERROR: Failed to register worker: %v", err)
 	}
 
 	// Iniciar envío de heartbeats
@@ -50,9 +49,9 @@ func main() {
 	// Configurar servidor HTTP para recibir tareas
 	http.HandleFunc(protocol.EndpointWorkerExecuteTask, worker.handleExecuteTask)
 
-	log.Printf("🚀 Worker %s iniciando en puerto %s...", workerID, port)
+	log.Printf("INFO: Worker %s starting on port %s", workerID, port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		log.Fatalf("Error iniciando servidor: %v", err)
+		log.Fatalf("ERROR: Failed to start server: %v", err)
 	}
 }
 
@@ -61,9 +60,8 @@ func main() {
 // ============================================================================
 
 func (w *Worker) register() error {
-	// 🔧 CORREGIDO: Usar nombre del worker en Docker (w.id es el nombre del contenedor)
 	// En Docker, los contenedores se pueden alcanzar por su nombre en la red
-	// Ejemplo: worker-1 → http://worker-1:9001
+	// Ejemplo: worker-1 -> http://worker-1:9001
 	workerAddress := fmt.Sprintf("http://%s:%s", w.id, w.port)
 
 	payload := map[string]string{
@@ -73,7 +71,7 @@ func (w *Worker) register() error {
 
 	body, _ := json.Marshal(payload)
 
-	log.Printf("📋 Registrando con address: %s", workerAddress)
+	log.Printf("INFO: Registering with address: %s", workerAddress)
 
 	resp, err := http.Post(
 		w.masterURL+protocol.EndpointWorkerRegister,
@@ -82,15 +80,15 @@ func (w *Worker) register() error {
 	)
 
 	if err != nil {
-		return fmt.Errorf("error conectando con master: %w", err)
+		return fmt.Errorf("failed to connect to master: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("master rechazó registro: status %d", resp.StatusCode)
+		return fmt.Errorf("master rejected registration: status %d", resp.StatusCode)
 	}
 
-	log.Printf("✅ Registrado con master en %s", w.masterURL)
+	log.Printf("INFO: Successfully registered with master at %s", w.masterURL)
 	return nil
 }
 
@@ -113,7 +111,7 @@ func (w *Worker) sendHeartbeats() {
 		)
 
 		if err != nil {
-			log.Printf("⚠️  Error enviando heartbeat: %v", err)
+			log.Printf("WARN: Failed to send heartbeat: %v", err)
 			continue
 		}
 		resp.Body.Close()
@@ -126,17 +124,17 @@ func (w *Worker) sendHeartbeats() {
 
 func (w *Worker) handleExecuteTask(wr http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(wr, "Método no permitido", http.StatusMethodNotAllowed)
+		http.Error(wr, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	var assignment types.TaskAssignment
 	if err := json.NewDecoder(r.Body).Decode(&assignment); err != nil {
-		http.Error(wr, "JSON inválido", http.StatusBadRequest)
+		http.Error(wr, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("📦 Tarea recibida: %s (operación: %s)", assignment.Task.ID, assignment.Task.Operation)
+	log.Printf("INFO: Task received: %s (operation: %s)", assignment.Task.ID, assignment.Task.Operation)
 
 	// Responder inmediatamente que la tarea fue aceptada
 	wr.WriteHeader(protocol.StatusTaskAccepted)
@@ -155,7 +153,7 @@ func (w *Worker) executeTask(assignment types.TaskAssignment) {
 	task := assignment.Task
 	startTime := time.Now()
 
-	log.Printf("▶️  Ejecutando tarea %s (op: %s)...", task.ID, task.Operation)
+	log.Printf("INFO: Executing task %s (op: %s)", task.ID, task.Operation)
 
 	// Ejecutar operador según el tipo
 	records, err := w.runOperator(&task)
@@ -163,7 +161,7 @@ func (w *Worker) executeTask(assignment types.TaskAssignment) {
 	var result types.TaskResult
 
 	if err != nil {
-		log.Printf("❌ Error ejecutando tarea %s: %v", task.ID, err)
+		log.Printf("ERROR: Task %s failed: %v", task.ID, err)
 		result = types.TaskResult{
 			TaskID:      task.ID,
 			Status:      "FAILED",
@@ -174,11 +172,11 @@ func (w *Worker) executeTask(assignment types.TaskAssignment) {
 	} else {
 		// Escribir resultados
 		if err := writeRecordsToFile(task.OutputPath, records); err != nil {
-			log.Printf("❌ Error escribiendo resultados: %v", err)
+			log.Printf("ERROR: Failed to write results: %v", err)
 			result = types.TaskResult{
 				TaskID:      task.ID,
 				Status:      "FAILED",
-				Error:       fmt.Sprintf("error escribiendo output: %v", err),
+				Error:       fmt.Sprintf("failed to write output: %v", err),
 				Duration:    time.Since(startTime).Seconds(),
 				CompletedAt: time.Now(),
 			}
@@ -191,13 +189,14 @@ func (w *Worker) executeTask(assignment types.TaskAssignment) {
 				Duration:         time.Since(startTime).Seconds(),
 				CompletedAt:      time.Now(),
 			}
-			log.Printf("✅ Tarea %s completada: %d records procesados", task.ID, len(records))
+			log.Printf("INFO: Task %s completed: %d records processed in %.2fs",
+				task.ID, len(records), time.Since(startTime).Seconds())
 		}
 	}
 
 	// Reportar resultado al master
 	if err := w.reportResult(assignment.MasterURL, result); err != nil {
-		log.Printf("❌ Error reportando resultado: %v", err)
+		log.Printf("ERROR: Failed to report result: %v", err)
 	}
 }
 
@@ -207,7 +206,6 @@ func (w *Worker) runOperator(task *types.Task) ([]types.Record, error) {
 		return operatorReadCSV(task)
 
 	case "map":
-		// Leer input de la tarea anterior
 		input, err := w.readInputs(task)
 		if err != nil {
 			return nil, err
@@ -236,33 +234,31 @@ func (w *Worker) runOperator(task *types.Task) ([]types.Record, error) {
 		return operatorReduceByKey(task, input)
 
 	case "join":
-		// Join requiere múltiples inputs
 		var inputs [][]types.Record
 		for _, path := range task.InputPaths {
 			records, err := readRecordsFromFile(path)
 			if err != nil {
-				return nil, fmt.Errorf("error leyendo input %s: %w", path, err)
+				return nil, fmt.Errorf("failed to read input %s: %w", path, err)
 			}
 			inputs = append(inputs, records)
 		}
 		return operatorJoin(task, inputs)
 
 	default:
-		return nil, fmt.Errorf("operador no soportado: %s", task.Operation)
+		return nil, fmt.Errorf("unsupported operator: %s", task.Operation)
 	}
 }
 
 func (w *Worker) readInputs(task *types.Task) ([]types.Record, error) {
 	if len(task.InputPaths) == 0 {
-		return nil, fmt.Errorf("no hay input paths")
+		return nil, fmt.Errorf("no input paths provided")
 	}
 
-	// Si hay múltiples inputs, combinarlos
 	var allRecords []types.Record
 	for _, path := range task.InputPaths {
 		records, err := readRecordsFromFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("error leyendo %s: %w", path, err)
+			return nil, fmt.Errorf("failed to read %s: %w", path, err)
 		}
 		allRecords = append(allRecords, records...)
 	}
@@ -281,7 +277,7 @@ func (w *Worker) reportResult(masterURL string, result types.TaskResult) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("master respondió con status %d", resp.StatusCode)
+		return fmt.Errorf("master responded with status %d", resp.StatusCode)
 	}
 
 	return nil

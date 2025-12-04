@@ -50,14 +50,14 @@ func (rc *RecordCache) Add(record types.Record) error {
 	rc.mutex.Lock()
 	defer rc.mutex.Unlock()
 
-	// Estimar tamaño del record (aproximado)
+	// Estimar tamaño del record
 	recordSize := estimateRecordSize(record)
 
 	// Verificar si necesita spill
 	if rc.memoryUsed+recordSize > rc.memoryLimit {
-		log.Printf("💾 Spilleando a disco (memoria: %d/%d bytes)", rc.memoryUsed, rc.memoryLimit)
+		log.Printf("INFO: Spilling to disk (memory: %d/%d bytes)", rc.memoryUsed, rc.memoryLimit)
 		if err := rc.spillToDisk(); err != nil {
-			return fmt.Errorf("error en spill: %w", err)
+			return fmt.Errorf("spill failed: %w", err)
 		}
 	}
 
@@ -91,7 +91,7 @@ func (rc *RecordCache) GetAll() ([]types.Record, error) {
 	for _, spillFile := range rc.spilledFiles {
 		records, err := readRecordsFromFile(spillFile)
 		if err != nil {
-			log.Printf("⚠️  Error leyendo spill file %s: %v", spillFile, err)
+			log.Printf("WARN: Failed to read spill file %s: %v", spillFile, err)
 			continue
 		}
 		result = append(result, records...)
@@ -119,7 +119,7 @@ func (rc *RecordCache) spillToDisk() error {
 		return err
 	}
 
-	log.Printf("✅ Spilleados %d records a %s", len(rc.records), spillFile)
+	log.Printf("INFO: Spilled %d records to %s", len(rc.records), spillFile)
 
 	// Registrar archivo y limpiar memoria
 	rc.spilledFiles = append(rc.spilledFiles, spillFile)
@@ -164,7 +164,7 @@ func (rc *RecordCache) Cleanup() error {
 	defer rc.mutex.Unlock()
 
 	if err := os.RemoveAll(rc.spillPath); err != nil {
-		log.Printf("⚠️  Error limpiando spill: %v", err)
+		log.Printf("WARN: Failed to cleanup spill directory: %v", err)
 		return err
 	}
 

@@ -21,18 +21,18 @@ import (
 
 func operatorReadCSV(task *types.Task) ([]types.Record, error) {
 	if len(task.InputPaths) == 0 {
-		return nil, fmt.Errorf("no input path especificado")
+		return nil, fmt.Errorf("no input path specified")
 	}
 
 	path := task.InputPaths[0]
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("error abriendo archivo %s: %w", path, err)
+		return nil, fmt.Errorf("failed to open file %s: %w", path, err)
 	}
 	defer file.Close()
 
 	// Usar caché para manejar archivos grandes
-	cache := NewRecordCache(100, task.ID) // 100MB por defecto
+	cache := NewRecordCache(100, task.ID)
 	defer cache.Cleanup()
 
 	reader := csv.NewReader(file)
@@ -40,7 +40,7 @@ func operatorReadCSV(task *types.Task) ([]types.Record, error) {
 	// Leer header
 	headers, err := reader.Read()
 	if err != nil {
-		return nil, fmt.Errorf("error leyendo headers: %w", err)
+		return nil, fmt.Errorf("failed to read headers: %w", err)
 	}
 
 	// Leer todas las filas
@@ -51,7 +51,7 @@ func operatorReadCSV(task *types.Task) ([]types.Record, error) {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("error en línea %d: %w", lineNum, err)
+			return nil, fmt.Errorf("error at line %d: %w", lineNum, err)
 		}
 
 		// Convertir fila a Record
@@ -82,7 +82,8 @@ func operatorReadCSV(task *types.Task) ([]types.Record, error) {
 	}
 
 	stats := cache.GetStats()
-	log.Printf("📊 ReadCSV Stats: %v", stats)
+	log.Printf("INFO: ReadCSV stats - total_records: %v, spill_files: %v, memory_used_mb: %.2f",
+		stats["total_records"], stats["spill_files"], stats["memory_used_mb"])
 
 	return records, nil
 }
@@ -97,7 +98,7 @@ func operatorMap(task *types.Task, input []types.Record) ([]types.Record, error)
 	for _, record := range input {
 		transformed, err := applyMapFunction(task.Function, record)
 		if err != nil {
-			return nil, fmt.Errorf("error en map: %w", err)
+			return nil, fmt.Errorf("map error: %w", err)
 		}
 		output = append(output, transformed)
 	}
@@ -108,7 +109,6 @@ func operatorMap(task *types.Task, input []types.Record) ([]types.Record, error)
 func applyMapFunction(fn string, record types.Record) (types.Record, error) {
 	switch fn {
 	case "to_lower":
-		// Convertir todos los strings a minúsculas
 		newData := make(map[string]interface{})
 		for k, v := range record.Data {
 			if str, ok := v.(string); ok {
@@ -142,7 +142,7 @@ func applyMapFunction(fn string, record types.Record) (types.Record, error) {
 		return types.Record{Data: newData}, nil
 
 	default:
-		return record, nil // No transformation
+		return record, nil
 	}
 }
 
@@ -156,7 +156,7 @@ func operatorFilter(task *types.Task, input []types.Record) ([]types.Record, err
 	for _, record := range input {
 		keep, err := applyFilterFunction(task.Function, record)
 		if err != nil {
-			return nil, fmt.Errorf("error en filter: %w", err)
+			return nil, fmt.Errorf("filter error: %w", err)
 		}
 		if keep {
 			output = append(output, record)
@@ -169,7 +169,6 @@ func operatorFilter(task *types.Task, input []types.Record) ([]types.Record, err
 func applyFilterFunction(fn string, record types.Record) (bool, error) {
 	switch fn {
 	case "non_empty":
-		// Mantener solo records con al menos un campo no vacío
 		for _, v := range record.Data {
 			if str, ok := v.(string); ok && str != "" {
 				return true, nil
@@ -178,14 +177,13 @@ func applyFilterFunction(fn string, record types.Record) (bool, error) {
 		return false, nil
 
 	case "has_text":
-		// Mantener records que tengan campo "text"
 		if _, exists := record.Data["text"]; exists {
 			return true, nil
 		}
 		return false, nil
 
 	default:
-		return true, nil // Keep all by default
+		return true, nil
 	}
 }
 
@@ -199,7 +197,7 @@ func operatorFlatMap(task *types.Task, input []types.Record) ([]types.Record, er
 	for _, record := range input {
 		expanded, err := applyFlatMapFunction(task.Function, record)
 		if err != nil {
-			return nil, fmt.Errorf("error en flat_map: %w", err)
+			return nil, fmt.Errorf("flat_map error: %w", err)
 		}
 		output = append(output, expanded...)
 	}
@@ -210,18 +208,15 @@ func operatorFlatMap(task *types.Task, input []types.Record) ([]types.Record, er
 func applyFlatMapFunction(fn string, record types.Record) ([]types.Record, error) {
 	switch fn {
 	case "split_words", "tokenize":
-		// Dividir el campo "text" en palabras
 		var results []types.Record
 
 		text, ok := record.Data["text"].(string)
 		if !ok {
-			return nil, fmt.Errorf("campo 'text' no encontrado o no es string")
+			return nil, fmt.Errorf("field 'text' not found or not a string")
 		}
 
-		// Dividir por espacios y limpiar
 		words := strings.Fields(text)
 		for _, word := range words {
-			// Limpiar puntuación básica
 			word = strings.Trim(word, ".,!?;:\"'")
 			if word != "" {
 				results = append(results, types.Record{
@@ -236,7 +231,6 @@ func applyFlatMapFunction(fn string, record types.Record) ([]types.Record, error
 		return results, nil
 
 	case "split_lines":
-		// Dividir por líneas
 		var results []types.Record
 		text, ok := record.Data["text"].(string)
 		if !ok {
@@ -278,7 +272,6 @@ func operatorReduceByKey(task *types.Task, input []types.Record) ([]types.Record
 	for _, record := range input {
 		key, ok := record.Data[keyField].(string)
 		if !ok {
-			// Si no es string, convertir a string
 			key = fmt.Sprintf("%v", record.Data[keyField])
 		}
 
@@ -290,7 +283,7 @@ func operatorReduceByKey(task *types.Task, input []types.Record) ([]types.Record
 	for key, records := range groups {
 		reduced, err := applyReduceFunction(task.Function, key, keyField, records)
 		if err != nil {
-			return nil, fmt.Errorf("error en reduce: %w", err)
+			return nil, fmt.Errorf("reduce error: %w", err)
 		}
 		output = append(output, reduced)
 	}
@@ -301,7 +294,6 @@ func operatorReduceByKey(task *types.Task, input []types.Record) ([]types.Record
 func applyReduceFunction(fn string, key string, keyField string, records []types.Record) (types.Record, error) {
 	switch fn {
 	case "sum", "count":
-		// Contar ocurrencias
 		return types.Record{
 			Data: map[string]interface{}{
 				keyField: key,
@@ -310,7 +302,6 @@ func applyReduceFunction(fn string, key string, keyField string, records []types
 		}, nil
 
 	case "collect":
-		// Colectar todos los valores
 		var values []interface{}
 		for _, r := range records {
 			for k, v := range r.Data {
@@ -327,11 +318,9 @@ func applyReduceFunction(fn string, key string, keyField string, records []types
 		}, nil
 
 	case "first":
-		// Tomar el primer record
 		return records[0], nil
 
 	case "last":
-		// Tomar el último record
 		return records[len(records)-1], nil
 
 	default:
@@ -345,12 +334,12 @@ func applyReduceFunction(fn string, key string, keyField string, records []types
 }
 
 // ============================================================================
-// OPERADOR: JOIN (Básico)
+// OPERADOR: JOIN
 // ============================================================================
 
 func operatorJoin(task *types.Task, inputs [][]types.Record) ([]types.Record, error) {
 	if len(inputs) != 2 {
-		return nil, fmt.Errorf("join requiere exactamente 2 inputs, recibidos: %d", len(inputs))
+		return nil, fmt.Errorf("join requires exactly 2 inputs, got: %d", len(inputs))
 	}
 
 	left := inputs[0]
@@ -358,7 +347,7 @@ func operatorJoin(task *types.Task, inputs [][]types.Record) ([]types.Record, er
 
 	keyField := task.Key
 	if keyField == "" {
-		keyField = "id" // Default
+		keyField = "id"
 	}
 
 	// Crear índice del dataset derecho
@@ -374,7 +363,6 @@ func operatorJoin(task *types.Task, inputs [][]types.Record) ([]types.Record, er
 		key := fmt.Sprintf("%v", leftRecord.Data[keyField])
 
 		if rightRecords, exists := rightIndex[key]; exists {
-			// Inner join: combinar con cada match
 			for _, rightRecord := range rightRecords {
 				joined := make(map[string]interface{})
 

@@ -30,7 +30,7 @@ func (s *Scheduler) monitorTaskTimeouts() {
 				if task.Status == "RUNNING" && task.StartedAt != nil {
 					elapsed := time.Since(*task.StartedAt)
 					if elapsed > 5*time.Minute {
-						log.Printf("TIMEOUT:  Timeout detectado en tarea %s (elapsed: %v)", task.ID, elapsed)
+						log.Printf("⏱️  Timeout detectado en tarea %s (elapsed: %v)", task.ID, elapsed)
 						execution.TasksMutex.RUnlock()
 
 						// Cambiar a failed para que se reintente
@@ -68,7 +68,7 @@ func (s *Scheduler) monitorWorkerFailures() {
 			continue
 		}
 
-		log.Printf("WARN:  Workers caídos detectados: %v", downWorkers)
+		log.Printf("⚠️  Workers caídos detectados: %v", downWorkers)
 
 		// Replanificar tareas de workers caídos
 		s.jobsMutex.RLock()
@@ -76,7 +76,7 @@ func (s *Scheduler) monitorWorkerFailures() {
 			execution.TasksMutex.Lock()
 			for _, task := range execution.Tasks {
 				if downWorkers[task.AssignedTo] && task.Status == "RUNNING" {
-					log.Printf("RETRY: Replanificando tarea %s (worker %s está DOWN)", task.ID, task.AssignedTo)
+					log.Printf("🔄 Replanificando tarea %s (worker %s está DOWN)", task.ID, task.AssignedTo)
 					task.Status = "PENDING"
 					task.AssignedTo = ""
 					s.taskQueue <- task
@@ -132,7 +132,7 @@ func NewScheduler(master *Master) *Scheduler {
 }
 
 func (s *Scheduler) Start() {
-	log.Println("INFO: Scheduler iniciado")
+	log.Println("📋 Scheduler iniciado")
 
 	// Worker que procesa la cola de tareas
 	go s.processTaskQueue()
@@ -146,7 +146,7 @@ func (s *Scheduler) Start() {
 
 func (s *Scheduler) Stop() {
 	close(s.stopChan)
-	log.Println("INFO: Scheduler detenido")
+	log.Println("📋 Scheduler detenido")
 }
 
 // ============================================================================
@@ -157,7 +157,7 @@ func (s *Scheduler) ScheduleJob(job *types.Job) error {
 	s.jobsMutex.Lock()
 	defer s.jobsMutex.Unlock()
 
-	log.Printf("INFO: Planificando job %s (%s)...", job.ID, job.Name)
+	log.Printf("📋 Planificando job %s (%s)...", job.ID, job.Name)
 
 	// Crear ejecución del job
 	execution := &JobExecution{
@@ -265,18 +265,18 @@ func (s *Scheduler) executeStage(jobID string, stageIdx int) {
 	s.jobsMutex.RUnlock()
 
 	if !exists {
-		log.Printf("ERROR: Job %s no encontrado", jobID)
+		log.Printf("❌ Job %s no encontrado", jobID)
 		return
 	}
 
 	if stageIdx >= len(execution.Stages) {
-		log.Printf("COMPLETE: Todos los stages completados para job %s", jobID)
+		log.Printf("✨ Todos los stages completados para job %s", jobID)
 		s.completeJob(jobID)
 		return
 	}
 
 	stage := execution.Stages[stageIdx]
-	log.Printf("EXEC:  Ejecutando Stage %d de job %s: %v (total stages: %d)", stageIdx, jobID, stage, len(execution.Stages))
+	log.Printf("▶️  Ejecutando Stage %d de job %s: %v (total stages: %d)", stageIdx, jobID, stage, len(execution.Stages))
 
 	execution.CurrentStage = stageIdx
 
@@ -286,7 +286,7 @@ func (s *Scheduler) executeStage(jobID string, stageIdx int) {
 	var errorMutex sync.Mutex
 
 	if len(stage) == 0 {
-		log.Printf("WARN:  Stage %d está vacío", stageIdx)
+		log.Printf("⚠️  Stage %d está vacío", stageIdx)
 		// Si el stage está vacío, avanzar al siguiente
 		s.executeStage(jobID, stageIdx+1)
 		return
@@ -296,7 +296,7 @@ func (s *Scheduler) executeStage(jobID string, stageIdx int) {
 	for _, nodeID := range stage {
 		node := s.findNode(execution.Job.DAG.Nodes, nodeID)
 		if node == nil {
-			log.Printf("ERROR: Nodo %s no encontrado en DAG", nodeID)
+			log.Printf("❌ Nodo %s no encontrado en DAG", nodeID)
 			continue
 		}
 
@@ -323,34 +323,34 @@ func (s *Scheduler) executeStage(jobID string, stageIdx int) {
 				execution.Tasks[task.ID] = task
 				execution.TasksMutex.Unlock()
 
-				log.Printf("   SEND: Cola: %s", task.ID)
+				log.Printf("   📤 Cola: %s", task.ID)
 				s.taskQueue <- task
 
 				// Esperar a que complete con timeout robusto
 				if err := s.waitForTaskCompletion(jobID, task.ID, execution, 10*time.Minute); err != nil {
-					log.Printf("   ERROR: Tarea %s error: %v", task.ID, err)
+					log.Printf("   ❌ Tarea %s error: %v", task.ID, err)
 					errorMutex.Lock()
 					stageErrors = append(stageErrors, err)
 					errorMutex.Unlock()
 				} else {
-					log.Printf("   SUCCESS: Tarea %s completó", task.ID)
+					log.Printf("   ✅ Tarea %s completó", task.ID)
 				}
 			}(nodeID, p)
 		}
 	}
 
 	// Esperar a que TODAS las goroutines del stage terminen
-	log.Printf("WAIT: Esperando que %d goroutines del stage completen...", len(stage))
+	log.Printf("⏳ Esperando que %d goroutines del stage completen...", len(stage))
 	wg.Wait()
 
 	// Verificar si hubo errores
 	if len(stageErrors) > 0 {
-		log.Printf("ERROR: Stage %d falló con %d errores", stageIdx, len(stageErrors))
+		log.Printf("❌ Stage %d falló con %d errores", stageIdx, len(stageErrors))
 		s.failJob(jobID, fmt.Sprintf("Errores en stage %d: %d tareas fallidas", stageIdx, len(stageErrors)))
 		return
 	}
 
-	log.Printf("SUCCESS: Stage %d de job %s completado - Avanzando a stage %d", stageIdx, jobID, stageIdx+1)
+	log.Printf("✅ Stage %d de job %s completado - Avanzando a stage %d", stageIdx, jobID, stageIdx+1)
 
 	// Ejecutar siguiente stage (RECURSIVO)
 	s.executeStage(jobID, stageIdx+1)
@@ -383,7 +383,7 @@ func (s *Scheduler) waitForTaskCompletion(jobID string, taskID string,
 			// Verificar estado actual
 			switch task.Status {
 			case "COMPLETED":
-				return nil // SUCCESS: Éxito
+				return nil // ✅ Éxito
 
 			case "FAILED":
 				if task.AttemptNum >= MaxRetries {
@@ -407,7 +407,7 @@ func (s *Scheduler) waitForTaskCompletion(jobID string, taskID string,
 				task.Error = "Timeout global alcanzado"
 				execution.TasksMutex.Unlock()
 
-				log.Printf("TIMEOUT:  Timeout para tarea %s (intento %d/%d)",
+				log.Printf("⏱️  Timeout para tarea %s (intento %d/%d)",
 					taskID, task.AttemptNum, MaxRetries)
 
 				if task.AttemptNum >= MaxRetries {
@@ -501,13 +501,13 @@ func (s *Scheduler) assignTask(task *types.Task) {
 	// Encontrar worker disponible
 	worker := s.selectWorker()
 	if worker == nil {
-		log.Printf("WARN:  No hay workers disponibles, reencolando tarea %s", task.ID)
+		log.Printf("⚠️  No hay workers disponibles, reencolando tarea %s", task.ID)
 		time.Sleep(2 * time.Second)
 		s.taskQueue <- task
 		return
 	}
 
-	log.Printf("SEND: Asignando tarea %s a worker %s", task.ID, worker.ID)
+	log.Printf("📤 Asignando tarea %s a worker %s", task.ID, worker.ID)
 
 	task.Status = "RUNNING"
 	task.AssignedTo = worker.ID
@@ -518,7 +518,7 @@ func (s *Scheduler) assignTask(task *types.Task) {
 	// Enviar tarea al worker
 	assignment := types.TaskAssignment{
 		Task:      *task,
-		MasterURL: fmt.Sprintf("http://master:%s", s.master.port), // SUCCESS: CAMBIAR: localhost → master
+		MasterURL: fmt.Sprintf("http://master:%s", s.master.port), // ✅ CAMBIAR: localhost → master
 	}
 
 	body, _ := json.Marshal(assignment)
@@ -529,19 +529,19 @@ func (s *Scheduler) assignTask(task *types.Task) {
 	)
 
 	if err != nil {
-		log.Printf("ERROR: Error enviando tarea a worker %s: %v", worker.ID, err)
+		log.Printf("❌ Error enviando tarea a worker %s: %v", worker.ID, err)
 		s.retryTask(task)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != protocol.StatusTaskAccepted {
-		log.Printf("ERROR: Worker %s rechazó tarea: status %d", worker.ID, resp.StatusCode)
+		log.Printf("❌ Worker %s rechazó tarea: status %d", worker.ID, resp.StatusCode)
 		s.retryTask(task)
 		return
 	}
 
-	log.Printf("SUCCESS: Tarea %s asignada a %s", task.ID, worker.ID)
+	log.Printf("✅ Tarea %s asignada a %s", task.ID, worker.ID)
 
 	// Actualizar estado del worker
 	s.master.workersMutex.Lock()
@@ -575,14 +575,14 @@ func (s *Scheduler) selectWorker() *types.WorkerInfo {
 
 func (s *Scheduler) retryTask(task *types.Task) {
 	if task.AttemptNum >= MaxRetries {
-		log.Printf("ERROR: Tarea %s excedió número máximo de reintentos (%d)",
+		log.Printf("❌ Tarea %s excedió número máximo de reintentos (%d)",
 			task.ID, MaxRetries)
 		task.Status = "FAILED"
 		task.Error = fmt.Sprintf("Máximo número de reintentos excedido (%d)", MaxRetries)
 		return
 	}
 
-	log.Printf("RETRY: Reintentando tarea %s (intento %d/%d)",
+	log.Printf("🔄 Reintentando tarea %s (intento %d/%d)",
 		task.ID, task.AttemptNum+1, MaxRetries)
 
 	task.Status = "PENDING"
@@ -600,7 +600,7 @@ func (s *Scheduler) retryTask(task *types.Task) {
 // ============================================================================
 
 func (s *Scheduler) HandleTaskResult(result types.TaskResult) {
-	log.Printf("RECV: Resultado recibido de tarea %s: %s", result.TaskID, result.Status)
+	log.Printf("📥 Resultado recibido de tarea %s: %s", result.TaskID, result.Status)
 
 	// Encontrar la tarea
 	var execution *JobExecution
@@ -621,7 +621,7 @@ func (s *Scheduler) HandleTaskResult(result types.TaskResult) {
 	s.jobsMutex.RUnlock()
 
 	if task == nil {
-		log.Printf("WARN:  Tarea %s no encontrada", result.TaskID)
+		log.Printf("⚠️  Tarea %s no encontrada", result.TaskID)
 		return
 	}
 
@@ -644,7 +644,7 @@ func (s *Scheduler) HandleTaskResult(result types.TaskResult) {
 
 	// Si falló, reintentar automáticamente
 	if result.Status == "FAILED" {
-		log.Printf("ERROR: Tarea %s falló: %s", result.TaskID, result.Error)
+		log.Printf("❌ Tarea %s falló: %s", result.TaskID, result.Error)
 		s.retryTask(task)
 		return
 	}
@@ -656,7 +656,7 @@ func (s *Scheduler) HandleTaskResult(result types.TaskResult) {
 			execution.OutputPaths[task.NodeID] = result.OutputPath
 			execution.TasksMutex.Unlock()
 		}
-		log.Printf("SUCCESS: Tarea %s completada exitosamente", result.TaskID)
+		log.Printf("✅ Tarea %s completada exitosamente", result.TaskID)
 	}
 }
 
@@ -686,7 +686,7 @@ func (s *Scheduler) completeJob(jobID string) {
 	s.master.jobsMutex.Unlock()
 
 	duration := now.Sub(execution.Job.SubmittedAt)
-	log.Printf("COMPLETE: Job %s completado en %s", jobID, duration)
+	log.Printf("✨ Job %s completado en %s", jobID, duration)
 }
 
 func (s *Scheduler) failJob(jobID string, reason string) {
@@ -710,7 +710,7 @@ func (s *Scheduler) failJob(jobID string, reason string) {
 	}
 	s.master.jobsMutex.Unlock()
 
-	log.Printf("ERROR: Job %s falló: %s", jobID, reason)
+	log.Printf("❌ Job %s falló: %s", jobID, reason)
 }
 
 func (s *Scheduler) GetJobExecution(jobID string) *JobExecution {

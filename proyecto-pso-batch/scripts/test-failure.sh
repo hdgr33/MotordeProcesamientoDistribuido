@@ -1,109 +1,132 @@
 #!/bin/bash
-# scripts/test-failure.sh - Test de tolerancia a fallos
+# scripts/test-failure.sh
+# Script para demostrar tolerancia a fallos
 
 set -e
 
-RED='\033[0;31m'
 GREEN='\033[0;32m'
+RED='\033[0;31m'
 YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+NC='\033[0m' # No Color
 
-echo ""
-echo -e "${CYAN}=========================================${NC}"
-echo -e "${GREEN}TEST DE TOLERANCIA A FALLOS${NC}"
-echo -e "${CYAN}=========================================${NC}"
-echo ""
+echo -e "${GREEN}=== PSO Batch - Test de Tolerancia a Fallos ===${NC}\n"
 
-MASTER_URL="http://localhost:8080"
-
-# 1. Verificar que el sistema está corriendo
-echo -e "${YELLOW}1. Verificando que el sistema está activo...${NC}"
-if ! curl -s "$MASTER_URL/api/v1/metrics" > /dev/null; then
-    echo -e "${RED}ERROR: Master no responde${NC}"
-    echo "Asegúrate de que master, worker1 y worker2 estén corriendo"
+# 1. Verificar que el cluster esté corriendo
+echo -e "${YELLOW}1. Verificando cluster...${NC}"
+if ! docker-compose ps | grep -q "Up"; then
+    echo -e "${RED}Error: Cluster no está corriendo. Ejecuta 'make up' primero${NC}"
     exit 1
 fi
 
-WORKERS=$(curl -s "$MASTER_URL/api/v1/workers" | grep -c "worker" || echo "0")
-echo -e "${GREEN}OK: $WORKERS workers activos${NC}"
-echo ""
+WORKERS=$(docker-compose ps worker | grep "Up" | wc -l)
+echo -e "${GREEN}   Cluster OK: 1 master + $WORKERS workers${NC}\n"
 
-# 2. Enviar job
-echo -e "${YELLOW}2. Enviando job WordCount...${NC}"
-JOB_RESPONSE=$(curl -s -X POST "$MASTER_URL/api/v1/jobs" \
-    -H "Content-Type: application/json" \
-    -d @examples/wordcount.json)
-
-JOB_ID=$(echo "$JOB_RESPONSE" | grep -o '"job_id":"[^"]*"' | cut -d'"' -f4)
+# 2. Enviar un job
+echo -e "${YELLOW}2. Enviando job de prueba...${NC}"
+JOB_RESPONSE=$(./bin/client submit examples/wordcount.json 2>&1)
+JOB_ID=$(echo "$JOB_RESPONSE" | grep "Job ID:" | awk '{print $3}')
 
 if [ -z "$JOB_ID" ]; then
-    echo -e "${RED}ERROR: No se pudo crear el job${NC}"
+    echo -e "${RED}Error: No se pudo obtener Job ID${NC}"
+    echo "$JOB_RESPONSE"
     exit 1
 fi
 
-echo -e "${GREEN}OK: Job creado: $JOB_ID${NC}"
-echo ""
+echo -e "${GREEN}   Job enviado: $JOB_ID${NC}\n"
 
-# 3. Esperar a que inicie
+# 3. Esperar a que el job esté en ejecución
 echo -e "${YELLOW}3. Esperando que el job inicie...${NC}"
-sleep 3
-
-# 4. Verificar estado
-echo -e "${YELLOW}4. Verificando estado del job...${NC}"
-STATUS=$(curl -s "$MASTER_URL/api/v1/jobs/$JOB_ID")
-JOB_STATUS=$(echo "$STATUS" | grep -o '"Status":"[^"]*"' | cut -d'"' -f4)
-echo -e "${GREEN}Estado: $JOB_STATUS${NC}"
-echo ""
-
-# 5. MATAR UN WORKER
-echo -e "${YELLOW}5. MATANDO WORKER-1 en 5 segundos...${NC}"
-echo "   Presiona Ctrl+C ahora si no quieres matar el worker"
 sleep 5
 
-echo -e "${RED}MATANDO WORKER-1...${NC}"
-pkill -f "WORKER_ID=worker-1" || true
+STATUS=$(./bin/client status "$JOB_ID" 2>&1 | grep "Status:" | awk '{print $2}')
+echo -e "${GREEN}   Status actual: $STATUS${NC}\n"
 
-echo -e "${RED}WORKER-1 MUERTO${NC}"
+# 4. Identificar worker con tareas activas
+echo -e "${YELLOW}4. Identificando worker con tareas activas...${NC}"
+WORKER_TO_KILL=$(docker-compose ps worker | grep "Up" | head -n1 | awk '{print $1}')
+
+if [ -z "$WORKER_TO_KILL" ]; then
+    echo -e "${RED}Error: No se pudo identificar worker${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}   Worker seleccionado: $WORKER_TO_KILL${NC}\n"
+
+# 5. Simular fallo: matar el worker
+echo -e "${RED}5. SIMULANDO FALLO: Matando worker $WORKER_TO_KILL...${NC}"
+docker kill "$WORKER_TO_KILL" > /dev/null 2>&1
+echo -e "${RED}   Worker eliminado!${NC}\n"
+
+# 6. Verificar que el master detecta el fallo
+echo -e "${YELLOW}6. Esperando que master detecte el fallo (15 segundos)...${NC}"
+sleep 15
+
+WORKERS_AFTER=$(docker-compose ps worker | grep "Up" | wc -l)
+echo -e "${GREEN}   Workers activos después del fallo: $WORKERS_AFTER${NC}\n"
+
+# 7. Verificar que las tareas se replanifican
+echo -e "${YELLOW}7. Verificando replanificación de tareas...${NC}"
+
+# Consultar logs del master para ver replanificación
+echo -e "${YELLOW}   Logs del master (últimas 20 líneas):${NC}"
+docker-compose logs --tail=20 master | grep -E "(WARN|RETRY|DOWN)" || true
 echo ""
 
-# 6. Monitorear recuperación
-echo -e "${YELLOW}6. Monitoreando recuperación durante 30 segundos...${NC}"
-echo ""
+# 8. Esperar a que el job complete
+echo -e "${YELLOW}8. Esperando completación del job...${NC}"
+MAX_WAIT=60
+ELAPSED=0
 
-for i in {1..15}; do
-    STATUS=$(curl -s "$MASTER_URL/api/v1/jobs/$JOB_ID" 2>/dev/null || echo "{}")
+while [ $ELAPSED -lt $MAX_WAIT ]; do
+    STATUS=$(./bin/client status "$JOB_ID" 2>&1 | grep "Status:" | awk '{print $2}' || echo "UNKNOWN")
     
-    PROGRESS=$(echo "$STATUS" | grep -o '"Progress":[0-9.]*' | cut -d':' -f2)
-    JOB_STATUS=$(echo "$STATUS" | grep -o '"Status":"[^"]*"' | cut -d'"' -f4)
-    TASKS_DONE=$(echo "$STATUS" | grep -o '"TasksDone":[0-9]*' | cut -d':' -f2)
-    TASKS_TOTAL=$(echo "$STATUS" | grep -o '"TasksTotal":[0-9]*' | cut -d':' -f2)
-    
-    if [ -z "$PROGRESS" ]; then
-        PROGRESS="0"
+    if [ "$STATUS" == "COMPLETED" ]; then
+        echo -e "${GREEN}   Job completado exitosamente!${NC}\n"
+        break
+    elif [ "$STATUS" == "FAILED" ]; then
+        echo -e "${RED}   Job falló :(${NC}\n"
+        ./bin/client status "$JOB_ID"
+        exit 1
     fi
     
-    WORKERS_ALIVE=$(curl -s "$MASTER_URL/api/v1/workers" 2>/dev/null | grep -c "IDLE\|BUSY" || echo "0")
-    
-    echo "[$i/15] Status: $JOB_STATUS | Progress: ${PROGRESS}% | Tasks: $TASKS_DONE/$TASKS_TOTAL | Workers Activos: $WORKERS_ALIVE"
-    
-    if [ "$JOB_STATUS" = "COMPLETED" ]; then
-        echo ""
-        echo -e "${GREEN}=========================================${NC}"
-        echo -e "${GREEN}EXITO: JOB COMPLETO AUNQUE WORKER-1 FALLÓ${NC}"
-        echo -e "${GREEN}=========================================${NC}"
-        echo ""
-        echo "Resultados:"
-        curl -s "$MASTER_URL/api/v1/jobs/$JOB_ID/results" | python3 -m json.tool 2>/dev/null || \
-            curl -s "$MASTER_URL/api/v1/jobs/$JOB_ID/results"
-        exit 0
-    fi
-    
-    sleep 2
+    echo -e "   Status: $STATUS (esperando... ${ELAPSED}s/${MAX_WAIT}s)"
+    sleep 5
+    ELAPSED=$((ELAPSED + 5))
 done
 
+if [ $ELAPSED -ge $MAX_WAIT ]; then
+    echo -e "${YELLOW}   Timeout esperando completación${NC}\n"
+fi
+
+# 9. Mostrar resultados finales
+echo -e "${YELLOW}9. Estado final del job:${NC}"
+./bin/client status "$JOB_ID"
 echo ""
-echo -e "${YELLOW}Job aún en progreso${NC}"
-echo "Estado final:"
-curl -s "$MASTER_URL/api/v1/jobs/$JOB_ID" | python3 -m json.tool 2>/dev/null || \
-    curl -s "$MASTER_URL/api/v1/jobs/$JOB_ID"
+
+# 10. Verificar reintentos en logs
+echo -e "${YELLOW}10. Verificando reintentos en logs:${NC}"
+RETRIES=$(docker-compose logs master | grep -c "RETRY:" || echo "0")
+echo -e "${GREEN}   Total de reintentos detectados: $RETRIES${NC}\n"
+
+# 11. Reiniciar worker caído
+echo -e "${YELLOW}11. Reiniciando worker caído...${NC}"
+docker-compose up -d --scale worker=$WORKERS > /dev/null 2>&1
+sleep 3
+echo -e "${GREEN}   Worker reiniciado. Cluster restaurado.${NC}\n"
+
+# Resumen
+echo -e "${GREEN}=== RESUMEN DEL TEST ===${NC}"
+echo -e "Job ID:              $JOB_ID"
+echo -e "Status final:        $STATUS"
+echo -e "Worker eliminado:    $WORKER_TO_KILL"
+echo -e "Reintentos:          $RETRIES"
+echo -e "Workers finales:     $(docker-compose ps worker | grep "Up" | wc -l)"
+echo ""
+
+if [ "$STATUS" == "COMPLETED" ] && [ "$RETRIES" -gt 0 ]; then
+    echo -e "${GREEN}✓ TEST EXITOSO: El sistema recuperó el fallo y completó el job${NC}"
+    exit 0
+else
+    echo -e "${YELLOW}⚠ TEST PARCIAL: Revisar logs para más detalles${NC}"
+    exit 0
+fi
