@@ -1,4 +1,5 @@
-// worker/main.go
+// worker/main.go - VERSIÓN SIMPLIFICADA (SIN checks de env)
+
 package main
 
 import (
@@ -60,12 +61,20 @@ func main() {
 // ============================================================================
 
 func (w *Worker) register() error {
+	// 🔧 CORREGIDO: Usar nombre del worker en Docker (w.id es el nombre del contenedor)
+	// En Docker, los contenedores se pueden alcanzar por su nombre en la red
+	// Ejemplo: worker-1 → http://worker-1:9001
+	workerAddress := fmt.Sprintf("http://%s:%s", w.id, w.port)
+
 	payload := map[string]string{
 		"worker_id": w.id,
-		"address":   fmt.Sprintf("http://localhost:%s", w.port),
+		"address":   workerAddress,
 	}
 
 	body, _ := json.Marshal(payload)
+
+	log.Printf("📋 Registrando con address: %s", workerAddress)
+
 	resp, err := http.Post(
 		w.masterURL+protocol.EndpointWorkerRegister,
 		"application/json",

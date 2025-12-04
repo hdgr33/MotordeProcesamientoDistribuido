@@ -494,6 +494,9 @@ func (s *Scheduler) processTaskQueue() {
 	}
 }
 
+// En master/scheduler.go, función assignTask()
+// BUSCA ESTA FUNCIÓN Y REEMPLAZA
+
 func (s *Scheduler) assignTask(task *types.Task) {
 	// Encontrar worker disponible
 	worker := s.selectWorker()
@@ -515,7 +518,7 @@ func (s *Scheduler) assignTask(task *types.Task) {
 	// Enviar tarea al worker
 	assignment := types.TaskAssignment{
 		Task:      *task,
-		MasterURL: fmt.Sprintf("http://localhost:%s", s.master.port),
+		MasterURL: fmt.Sprintf("http://master:%s", s.master.port), // ✅ CAMBIAR: localhost → master
 	}
 
 	body, _ := json.Marshal(assignment)

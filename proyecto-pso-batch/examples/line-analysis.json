@@ -1,0 +1,35 @@
+{
+  "name": "line-analysis",
+  "dag": {
+    "nodes": [
+      {
+        "id": "read",
+        "op": "read_csv",
+        "path": "data/input/text.csv",
+        "partitions": 2
+      },
+      {
+        "id": "split_lines",
+        "op": "flat_map",
+        "fn": "split_lines"
+      },
+      {
+        "id": "extract_text",
+        "op": "map",
+        "fn": "to_lower"
+      },
+      {
+        "id": "count_by_text",
+        "op": "reduce_by_key",
+        "key": "text",
+        "fn": "sum"
+      }
+    ],
+    "edges": [
+      ["read", "split_lines"],
+      ["split_lines", "extract_text"],
+      ["extract_text", "count_by_text"]
+    ]
+  },
+  "parallelism": 2
+}

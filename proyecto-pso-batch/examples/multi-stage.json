@@ -1,0 +1,47 @@
+{
+  "name": "multi-stage-processing",
+  "dag": {
+    "nodes": [
+      {
+        "id": "read",
+        "op": "read_csv",
+        "path": "data/input/text.csv",
+        "partitions": 2
+      },
+      {
+        "id": "stage1_lowercase",
+        "op": "map",
+        "fn": "to_lower"
+      },
+      {
+        "id": "stage2_trim",
+        "op": "map",
+        "fn": "trim"
+      },
+      {
+        "id": "stage3_filter",
+        "op": "filter",
+        "fn": "non_empty"
+      },
+      {
+        "id": "stage4_tokenize",
+        "op": "flat_map",
+        "fn": "tokenize"
+      },
+      {
+        "id": "stage5_count",
+        "op": "reduce_by_key",
+        "key": "word",
+        "fn": "sum"
+      }
+    ],
+    "edges": [
+      ["read", "stage1_lowercase"],
+      ["stage1_lowercase", "stage2_trim"],
+      ["stage2_trim", "stage3_filter"],
+      ["stage3_filter", "stage4_tokenize"],
+      ["stage4_tokenize", "stage5_count"]
+    ]
+  },
+  "parallelism": 2
+}

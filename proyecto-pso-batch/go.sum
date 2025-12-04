@@ -1,0 +1,2 @@
+cat > go.sum << 'EOF'
+EOF

@@ -1,0 +1,6 @@
+id,text,timestamp
+1,"hello world",2024-01-01T10:00:00Z
+2,"hello test",2024-01-01T10:01:00Z
+3,"world of go",2024-01-01T10:02:00Z
+4,"distributed system",2024-01-01T10:03:00Z
+5,"batch processing",2024-01-01T10:04:00Z

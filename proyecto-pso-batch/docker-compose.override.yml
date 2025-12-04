@@ -1,0 +1,53 @@
+# docker-compose.override.yml
+# Este archivo es automáticamente cargado por docker-compose
+# Sobrescribe settings para desarrollo local
+
+version: '3.8'
+
+services:
+  master:
+    # En desarrollo, reconstruir si hay cambios
+    build:
+      context: .
+      dockerfile: Dockerfile.master
+      cache_from:
+        - pso-batch-master:latest
+    # Ver logs en consola
+    stdin_open: true
+    tty: true
+    # Permiso para debugging
+    cap_add:
+      - SYS_PTRACE
+
+  worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+      cache_from:
+        - pso-batch-worker:latest
+    stdin_open: true
+    tty: true
+    cap_add:
+      - SYS_PTRACE
+
+  worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+      cache_from:
+        - pso-batch-worker:latest
+    stdin_open: true
+    tty: true
+    cap_add:
+      - SYS_PTRACE
+
+  worker-3:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+      cache_from:
+        - pso-batch-worker:latest
+    stdin_open: true
+    tty: true
+    cap_add:
+      - SYS_PTRACE

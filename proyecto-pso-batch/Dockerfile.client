@@ -1,0 +1,37 @@
+# ============================================================================
+# Dockerfile.client - Client Node
+# ============================================================================
+FROM golang:1.21-alpine AS builder
+
+WORKDIR /build
+
+# Copiar módulos
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copiar código
+COPY . .
+
+# Compilar client - RUTA CORREGIDA (sin cmd/)
+RUN CGO_ENABLED=0 GOOS=linux go build -o client ./client
+
+# ============================================================================
+# Stage 2: Runtime
+# ============================================================================
+FROM alpine:3.18
+
+RUN apk add --no-cache ca-certificates curl
+
+WORKDIR /app
+
+# Crear directorios
+RUN mkdir -p data/input data/output logs
+
+# Copiar binario
+COPY --from=builder /build/client .
+
+# Copiar ejemplos
+COPY examples examples
+
+ENTRYPOINT ["./client"]
+CMD ["workers"]

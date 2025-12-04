@@ -1,0 +1,22 @@
+{
+  "name": "simple-filter",
+  "dag": {
+    "nodes": [
+      {
+        "id": "read",
+        "op": "read_csv",
+        "path": "data/input/text.csv",
+        "partitions": 2
+      },
+      {
+        "id": "filter_empty",
+        "op": "filter",
+        "fn": "non_empty"
+      }
+    ],
+    "edges": [
+      ["read", "filter_empty"]
+    ]
+  },
+  "parallelism": 2
+}

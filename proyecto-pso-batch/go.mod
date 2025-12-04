@@ -1,3 +1,3 @@
 module github.com/hdgr33/MotordeProcesamientoDistribuido/PROYECTO-PSO-BATCH
 
-go 1.25
+go 1.21

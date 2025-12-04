@@ -1,0 +1,34 @@
+{
+  "name": "text-cleaning",
+  "dag": {
+    "nodes": [
+      {
+        "id": "read",
+        "op": "read_csv",
+        "path": "data/input/text.csv",
+        "partitions": 2
+      },
+      {
+        "id": "lowercase",
+        "op": "map",
+        "fn": "to_lower"
+      },
+      {
+        "id": "trim",
+        "op": "map",
+        "fn": "trim"
+      },
+      {
+        "id": "filter_empty",
+        "op": "filter",
+        "fn": "non_empty"
+      }
+    ],
+    "edges": [
+      ["read", "lowercase"],
+      ["lowercase", "trim"],
+      ["trim", "filter_empty"]
+    ]
+  },
+  "parallelism": 2
+}

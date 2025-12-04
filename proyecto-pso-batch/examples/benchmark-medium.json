@@ -1,0 +1,47 @@
+{
+  "name": "benchmark-medium",
+  "dag": {
+    "nodes": [
+      {
+        "id": "read",
+        "op": "read_csv",
+        "path": "data/input/text.csv",
+        "partitions": 3
+      },
+      {
+        "id": "map1",
+        "op": "map",
+        "fn": "to_lower"
+      },
+      {
+        "id": "map2",
+        "op": "map",
+        "fn": "trim"
+      },
+      {
+        "id": "filter",
+        "op": "filter",
+        "fn": "non_empty"
+      },
+      {
+        "id": "flat_map",
+        "op": "flat_map",
+        "fn": "split_words"
+      },
+      {
+        "id": "reduce",
+        "op": "reduce_by_key",
+        "key": "word",
+        "fn": "sum"
+      }
+    ],
+    "edges": [
+      ["read", "map1"],
+      ["map1", "map2"],
+      ["map2", "filter"],
+      ["filter", "flat_map"],
+      ["flat_map", "reduce"]
+    ]
+  },
+  "parallelism": 3
+}
